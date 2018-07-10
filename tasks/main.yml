@@ -1,0 +1,83 @@
+
+  - name: Set date
+    set_fact:
+      change_date: "{{ ansible_date_time.date }}"
+
+  - block:
+    - name: Creating Checkpoint
+      nxos_rollback:
+        checkpoint_file: "{{ change_date }}_-_CR{{ change_request }}.cfg"
+        provider: "{{ nxos_cli }}"
+      register: rollback_checkpoint
+
+########################################## Configure Server access-ports ##################
+    - name: Configure interface descriptions
+      nxos_interface:
+        interface: "{{ item.interface }}"
+        description: "{{ item.peer_row }}.{{ item.peer_rack }}_{{ item.peer_name }}_{{ item.peer_port }}"
+        provider: "{{ nxos_provider }}"
+      with_items:
+        - "{{ server_port_descript }}"
+        - "{{ server_l2_interfaces }}"
+      when: item.state == "present" and item is defined
+      tags: test
+
+    - name: Configure switchport as layer2
+      nxos_interface:
+        interface: "{{ item.interface }}"
+        mode: layer2
+        admin_state: "{{ item.admin_state }}"
+        mtu: "{{ item.mtu }}"
+        provider: "{{ nxos_provider }}"
+      with_items:
+        - "{{ server_l2_interfaces }}"
+      when: item is defined and item.state == "present" and (item.mtu == "9216" or item.mtu == "1500")
+
+    - name: Configure L2 access ports
+      nxos_switchport:
+        interface: "{{ item.interface }}"
+        mode: access
+        access_vlan: "{{ item.access_vlan }}"
+        state: "{{ item.state }}"
+        provider: "{{ nxos_provider }}"
+      with_items:
+        - "{{ server_l2_interfaces }}"
+      when: item is defined and item.state == "present" and item.mode == "access" and item.access_vlan is defined
+      tags: test
+
+    - name: Configure Server Trunks w/ native Vlan
+      nxos_switchport:
+        interface: "{{ item.interface }}"
+        mode: trunk
+        trunk_allowed_vlans: "{{ item.trunk_allowed_vlans }}"
+        native_vlan: "{{ item.native_vlan }}"
+        state: "{{ item.state }}"
+        provider: "{{ nxos_provider }}"
+      with_items:
+        - "{{ server_l2_interfaces }}"
+      when: item is defined and item.state == "present" and item.mode == "trunk" and item.native_vlan is defined
+
+    - name: Configure Server Trunk vlans
+      nxos_switchport:
+        interface: "{{ item.interface }}"
+        mode: trunk
+        trunk_allowed_vlans: "{{ item.trunk_allowed_vlans }}"
+        state: "{{ item.state }}"
+        provider: "{{ nxos_provider }}"
+      with_items:
+        - "{{ server_l2_interfaces }}"
+      when: item is defined and item.state == "present" and item.mode == "trunk"
+      tags: test
+
+    - name: Apply Storm Control
+      nxos_config:
+        src: storm_control.j2
+        provider: "{{ nxos_cli }}"
+      with_items:
+        - "{{ server_l2_interfaces }}"
+      when: item is defined and item.state == "present"
+
+    rescue:
+      - nxos_rollback:
+          rollback_to: "{{ change_request }}-{{ change_date }}.cfg"
+          provider: "{{ nxos_cli }}"
